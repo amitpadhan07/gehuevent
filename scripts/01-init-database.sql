@@ -176,11 +176,9 @@ CREATE INDEX idx_registrations_attendance_marked ON event_registrations(attendan
 CREATE INDEX idx_attendance_logs_registration_id ON attendance_logs(registration_id);
 CREATE INDEX idx_attendance_logs_event_id ON attendance_logs(event_id);
 CREATE INDEX idx_attendance_logs_marked_at ON attendance_logs(marked_at);
-
 CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
 CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
-
 CREATE INDEX idx_certificates_event_id ON certificates(event_id);
 CREATE INDEX idx_certificates_user_id ON certificates(user_id);
 CREATE INDEX idx_clubs_is_active ON clubs(is_active);
