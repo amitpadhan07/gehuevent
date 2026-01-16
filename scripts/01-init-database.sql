@@ -183,5 +183,4 @@ CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
 
 CREATE INDEX idx_certificates_event_id ON certificates(event_id);
 CREATE INDEX idx_certificates_user_id ON certificates(user_id);
-
 CREATE INDEX idx_clubs_is_active ON clubs(is_active);
