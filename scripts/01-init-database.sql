@@ -1,6 +1,12 @@
 -- Create ENUM types
+-- (Safe to run if types don't exist; if they do, you might see "type already exists" errors which can be ignored or handled by dropping them first)
+DROP TYPE IF EXISTS user_role CASCADE;
 CREATE TYPE user_role AS ENUM ('student', 'chairperson', 'admin');
+
+DROP TYPE IF EXISTS event_type_enum CASCADE;
 CREATE TYPE event_type_enum AS ENUM ('seminar', 'workshop', 'hackathon', 'competition', 'festival', 'lecture', 'other');
+
+DROP TYPE IF EXISTS attendance_status CASCADE;
 CREATE TYPE attendance_status AS ENUM ('present', 'absent', 'late', 'excused');
 
 -- Users table
@@ -18,9 +24,7 @@ CREATE TABLE users (
   email_verified BOOLEAN DEFAULT FALSE,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_email (email),
-  INDEX idx_role (role)
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Clubs table
@@ -35,8 +39,7 @@ CREATE TABLE clubs (
   phone VARCHAR(20),
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_name (name)
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Club members (association table)
@@ -48,9 +51,7 @@ CREATE TABLE club_members (
   joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_club_user (club_id, user_id),
-  INDEX idx_club_id (club_id),
-  INDEX idx_user_id (user_id)
+  CONSTRAINT unique_club_user UNIQUE (club_id, user_id)
 );
 
 -- Events table
@@ -74,10 +75,7 @@ CREATE TABLE events (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE,
-  FOREIGN KEY (created_by) REFERENCES users(id),
-  INDEX idx_club_id (club_id),
-  INDEX idx_event_date (event_date),
-  INDEX idx_published (is_published)
+  FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
 -- Event registrations table
@@ -98,11 +96,7 @@ CREATE TABLE event_registrations (
   cancelled_at TIMESTAMP,
   FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_registration (event_id, user_id),
-  INDEX idx_event_id (event_id),
-  INDEX idx_user_id (user_id),
-  INDEX idx_qr_token (qr_code_token),
-  INDEX idx_attendance_marked (attendance_marked)
+  CONSTRAINT unique_registration UNIQUE (event_id, user_id)
 );
 
 -- Attendance logs (detailed tracking)
@@ -120,10 +114,7 @@ CREATE TABLE attendance_logs (
   FOREIGN KEY (registration_id) REFERENCES event_registrations(id) ON DELETE CASCADE,
   FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  FOREIGN KEY (marked_by) REFERENCES users(id),
-  INDEX idx_registration_id (registration_id),
-  INDEX idx_event_id (event_id),
-  INDEX idx_marked_at (marked_at)
+  FOREIGN KEY (marked_by) REFERENCES users(id)
 );
 
 -- Email templates table
@@ -148,10 +139,7 @@ CREATE TABLE audit_logs (
   ip_address VARCHAR(45),
   user_agent TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-  INDEX idx_user_id (user_id),
-  INDEX idx_created_at (created_at),
-  INDEX idx_entity (entity_type, entity_id)
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- Certificates table
@@ -164,13 +152,36 @@ CREATE TABLE certificates (
   issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_cert (event_id, user_id),
-  INDEX idx_event_id (event_id),
-  INDEX idx_user_id (user_id)
+  CONSTRAINT unique_cert UNIQUE (event_id, user_id)
 );
 
--- Create indexes for common queries
-CREATE INDEX idx_user_email ON users(email);
-CREATE INDEX idx_event_club ON events(club_id);
-CREATE INDEX idx_registration_status ON event_registrations(attendance_marked);
-CREATE INDEX idx_club_active ON clubs(is_active);
+-- Create indexes (PostgreSQL specific)
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_role ON users(role);
+
+CREATE INDEX idx_clubs_name ON clubs(name);
+
+CREATE INDEX idx_club_members_club_id ON club_members(club_id);
+CREATE INDEX idx_club_members_user_id ON club_members(user_id);
+
+CREATE INDEX idx_events_club_id ON events(club_id);
+CREATE INDEX idx_events_event_date ON events(event_date);
+CREATE INDEX idx_events_published ON events(is_published);
+
+CREATE INDEX idx_registrations_event_id ON event_registrations(event_id);
+CREATE INDEX idx_registrations_user_id ON event_registrations(user_id);
+CREATE INDEX idx_registrations_qr_token ON event_registrations(qr_code_token);
+CREATE INDEX idx_registrations_attendance_marked ON event_registrations(attendance_marked);
+
+CREATE INDEX idx_attendance_logs_registration_id ON attendance_logs(registration_id);
+CREATE INDEX idx_attendance_logs_event_id ON attendance_logs(event_id);
+CREATE INDEX idx_attendance_logs_marked_at ON attendance_logs(marked_at);
+
+CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
+CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
+CREATE INDEX idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
+
+CREATE INDEX idx_certificates_event_id ON certificates(event_id);
+CREATE INDEX idx_certificates_user_id ON certificates(user_id);
+
+CREATE INDEX idx_clubs_is_active ON clubs(is_active);
