@@ -1,10 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { Registration, Event, User } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
 import { sendEmail, generateRegistrationEmailHTML } from "@/lib/brevo"
+import { Types } from "mongoose"
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -17,43 +21,43 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const eventId = Number.parseInt(params.id)
-    const { registration_id } = await req.json()
+    const eventId = params.id
+    const { registrationId } = await req.json()
 
-    // Get registration with user and event details
-    const result = await pool.query(
-      `SELECT er.id, er.qr_code_data,
-              e.title, e.event_date, e.venue_address, e.is_online, e.online_link,
-              c.name as club_name,
-              u.email, u.full_name
-       FROM event_registrations er
-       JOIN events e ON er.event_id = e.id
-       JOIN clubs c ON e.club_id = c.id
-       JOIN users u ON er.user_id = u.id
-       WHERE er.id = $1 AND er.event_id = $2 AND er.user_id = $3`,
-      [registration_id, eventId, payload.userId],
-    )
+    // Get registration with event details
+    const registration = await Registration.findById(new Types.ObjectId(registrationId))
+      .populate({
+        path: "eventId",
+        select: "title schedule location isOnline onlineLink clubId",
+        populate: {
+          path: "clubId",
+          select: "name",
+        },
+      })
+      .populate("userId", "email fullName")
 
-    if (result.rows.length === 0) {
+    if (
+      !registration ||
+      registration.eventId._id.toString() !== eventId ||
+      registration.userId._id.toString() !== payload.userId
+    ) {
       return NextResponse.json({ error: "Registration not found" }, { status: 404 })
     }
 
-    const registration = result.rows[0]
-
     // Generate and send email
     const emailHTML = generateRegistrationEmailHTML({
-      eventTitle: registration.title,
-      eventDate: registration.event_date,
-      clubName: registration.club_name,
-      venue: registration.venue_address,
-      studentName: registration.full_name,
-      qrCodeDataUrl: registration.qr_code_data,
-      onlineLink: registration.is_online ? registration.online_link : undefined,
+      eventTitle: registration.eventId.title,
+      eventDate: registration.eventId.schedule.startDate,
+      clubName: registration.eventId.clubId.name,
+      venue: registration.eventId.location.venueAddress,
+      studentName: registration.userId.fullName,
+      qrCodeDataUrl: registration.qrCode.data,
+      onlineLink: registration.eventId.isOnline ? registration.eventId.onlineLink : undefined,
     })
 
     const emailSent = await sendEmail({
-      to: [{ email: registration.email, name: registration.full_name }],
-      subject: `Registration Confirmed – ${registration.title}`,
+      to: [{ email: registration.userId.email, name: registration.userId.fullName }],
+      subject: `Registration Confirmed – ${registration.eventId.title}`,
       htmlContent: emailHTML,
     })
 

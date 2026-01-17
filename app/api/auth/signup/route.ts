@@ -1,14 +1,17 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { User, AuditLog } from "@/lib/models"
 import { hashPassword, generateToken } from "@/lib/auth"
 import { ValidationError } from "@/lib/errors"
 
 export async function POST(req: NextRequest) {
   try {
-    const { email, password, full_name, roll_number, branch, year, role = "student" } = await req.json()
+    await connectDB()
+
+    const { email, password, fullName, rollNumber, branch, year, role = "student" } = await req.json()
 
     // Validation
-    if (!email || !password || !full_name) {
+    if (!email || !password || !fullName) {
       throw new ValidationError("Email, password, and full name are required")
     }
 
@@ -17,45 +20,50 @@ export async function POST(req: NextRequest) {
     }
 
     // Check if user exists
-    const existingUser = await pool.query("SELECT id FROM users WHERE email = $1", [email])
-    if (existingUser.rows.length > 0) {
+    const existingUser = await User.findOne({ email: email.toLowerCase() })
+    if (existingUser) {
       throw new ValidationError("Email already registered")
     }
 
     // Hash password
-    const password_hash = await hashPassword(password)
+    const passwordHash = await hashPassword(password)
 
     // Create user
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash, full_name, roll_number, branch, year, role, email_verified) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-       RETURNING id, email, full_name, role`,
-      [email, password_hash, full_name, roll_number || null, branch || null, year || null, role, true],
-    )
-
-    const user = result.rows[0]
+    const user = await User.create({
+      email: email.toLowerCase(),
+      passwordHash,
+      fullName,
+      rollNumber: rollNumber || undefined,
+      branch: branch || undefined,
+      year: year || undefined,
+      role,
+      emailVerified: true,
+    })
 
     // Generate token
     const token = generateToken({
-      userId: user.id,
+      userId: user._id.toString(),
       email: user.email,
       role: user.role,
     })
 
     // Log audit
-    await pool.query(
-      `INSERT INTO audit_logs (user_id, action, entity_type, entity_id) 
-       VALUES ($1, $2, $3, $4)`,
-      [user.id, "USER_SIGNUP", "users", user.id],
-    )
+    await AuditLog.create({
+      userId: user._id,
+      action: "USER_SIGNUP",
+      target: {
+        entityType: "User",
+        entityId: user._id,
+      },
+    })
 
     return NextResponse.json(
       {
         success: true,
         user: {
-          id: user.id,
+          id: user._id,
           email: user.email,
-          full_name: user.full_name,
+          fullName: user.fullName,
           role: user.role,
         },
         token,

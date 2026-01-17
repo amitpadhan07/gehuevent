@@ -109,8 +109,10 @@ export default function ChairpersonDashboard() {
                         {new Date(event.event_date).toLocaleDateString("en-US", {
                           month: "short",
                           day: "numeric",
+                        })} at {new Date(event.event_date).toLocaleTimeString("en-US", {
                           hour: "2-digit",
                           minute: "2-digit",
+                          hour12: true,
                         })}
                       </p>
                     </div>

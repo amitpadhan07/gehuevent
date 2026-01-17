@@ -1,9 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { Event, Registration } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
+import { Types } from "mongoose"
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const resolvedParams = await params
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -16,30 +21,40 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    const eventId = Number.parseInt(params.id)
+    const eventId = resolvedParams.id
 
     // Verify ownership
-    const eventResult = await pool.query("SELECT created_by FROM events WHERE id = $1", [eventId])
+    const event = await Event.findById(new Types.ObjectId(eventId))
 
-    if (eventResult.rows.length === 0) {
+    if (!event) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 })
     }
 
-    if (eventResult.rows[0].created_by !== payload.userId) {
+    if (event.createdBy.toString() !== payload.userId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    const result = await pool.query(
-      `SELECT er.id, er.user_id, er.registration_date, er.attendance_marked, er.attendance_status,
-              u.full_name, u.email, u.roll_number, u.branch
-       FROM event_registrations er
-       JOIN users u ON er.user_id = u.id
-       WHERE er.event_id = $1 AND er.is_cancelled = false
-       ORDER BY u.full_name ASC`,
-      [eventId],
-    )
+    const registrations = await Registration.find({
+      eventId: new Types.ObjectId(eventId),
+      status: { $ne: "cancelled" },
+    })
+      .populate("userId", "fullName email rollNumber branch")
+      .sort({ createdAt: -1 })
+      .lean()
 
-    return NextResponse.json({ success: true, registrations: result.rows })
+    const formattedRegistrations = registrations.map((reg: any) => ({
+      id: reg._id,
+      userId: reg.userId._id,
+      registeredAt: reg.createdAt,
+      attendanceMarked: reg.attendance.isMarked,
+      attendanceStatus: reg.attendance.currentStatus,
+      fullName: reg.userId.fullName,
+      email: reg.userId.email,
+      rollNumber: reg.userId.rollNumber,
+      branch: reg.userId.branch,
+    }))
+
+    return NextResponse.json({ success: true, registrations: formattedRegistrations })
   } catch (error: any) {
     console.error("Registrations fetch error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

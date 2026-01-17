@@ -1,10 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { Event, Registration, User } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
 import { generateQRCode, encryptQRToken } from "@/lib/qr-code"
+import { Types } from "mongoose"
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -17,63 +21,82 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const eventId = Number.parseInt(params.id)
+    const { id } = await params
+    const eventId = id
 
     // Check event exists
-    const eventResult = await pool.query("SELECT id, max_capacity FROM events WHERE id = $1", [eventId])
+    const event = await Event.findById(new Types.ObjectId(eventId))
 
-    if (eventResult.rows.length === 0) {
+    if (!event) {
       return NextResponse.json({ error: "Event not found" }, { status: 404 })
     }
 
     // Check if already registered
-    const existingReg = await pool.query(
-      `SELECT id FROM event_registrations 
-       WHERE event_id = $1 AND user_id = $2 AND is_cancelled = false`,
-      [eventId, payload.userId],
-    )
+    const existingReg = await Registration.findOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(payload.userId),
+      status: { $ne: "cancelled" },
+    })
 
-    if (existingReg.rows.length > 0) {
+    if (existingReg) {
       return NextResponse.json({ error: "Already registered for this event" }, { status: 400 })
     }
 
     // Check capacity
-    const capacityResult = await pool.query(
-      `SELECT COUNT(*) as count FROM event_registrations 
-       WHERE event_id = $1 AND is_cancelled = false`,
-      [eventId],
-    )
+    const registrationCount = await Registration.countDocuments({
+      eventId: new Types.ObjectId(eventId),
+      status: { $ne: "cancelled" },
+    })
 
-    const event = eventResult.rows[0]
-    if (event.max_capacity && capacityResult.rows[0].count >= event.max_capacity) {
+    if (event.capacity.max && registrationCount >= event.capacity.max) {
       return NextResponse.json({ error: "Event is full" }, { status: 400 })
     }
 
+    // Get user details for snapshot
+    const user = await User.findById(new Types.ObjectId(payload.userId))
+
     // Create registration
     const qrToken = encryptQRToken(payload.userId)
-    const qrCode = await generateQRCode(0, eventId) // Will update with registration ID
+    const qrCode = await generateQRCode(0, eventId)
 
-    const regResult = await pool.query(
-      `INSERT INTO event_registrations (event_id, user_id, qr_code_token, qr_code_data)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, event_id, user_id, registration_date`,
-      [eventId, payload.userId, qrToken, qrCode],
-    )
+    const registration = await Registration.create({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(payload.userId),
+      userSnapshot: {
+        fullName: user?.fullName,
+        rollNumber: user?.rollNumber,
+        email: user?.email,
+      },
+      qrCode: {
+        token: qrToken,
+        data: qrCode,
+      },
+      status: "registered",
+    })
 
     // Update with actual registration ID
-    await pool.query(
-      `UPDATE event_registrations 
-       SET qr_code_data = $1 
-       WHERE id = $2`,
-      [await generateQRCode(regResult.rows[0].id, eventId), regResult.rows[0].id],
-    )
+    const updatedQRCode = await generateQRCode(registration._id.toString(), eventId)
+    registration.qrCode.data = updatedQRCode
+    await registration.save()
+
+    // Increment event registration count
+    event.capacity.registeredCount = await Registration.countDocuments({
+      eventId: new Types.ObjectId(eventId),
+      status: { $ne: "cancelled" },
+    })
+    await event.save()
 
     return NextResponse.json(
       {
         success: true,
-        registration: regResult.rows[0],
+        registration: {
+          id: registration._id,
+          eventId: registration.eventId,
+          userId: registration.userId,
+          registeredAt: registration.createdAt,
+        },
       },
-      { status: 201 },
+      { status: 201 }
     )
   } catch (error: any) {
     console.error("Registration error:", error)

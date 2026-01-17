@@ -1,10 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { User, AuditLog } from "@/lib/models"
 import { comparePassword, generateToken } from "@/lib/auth"
 import { ValidationError, UnauthorizedError } from "@/lib/errors"
 
 export async function POST(req: NextRequest) {
   try {
+    await connectDB()
+
     const { email, password } = await req.json()
 
     // Validation
@@ -13,43 +16,41 @@ export async function POST(req: NextRequest) {
     }
 
     // Find user
-    const result = await pool.query(
-      "SELECT id, email, password_hash, full_name, role FROM users WHERE email = $1 AND is_active = true",
-      [email],
-    )
+    const user = await User.findOne({ email: email.toLowerCase(), isActive: true })
 
-    if (result.rows.length === 0) {
+    if (!user) {
       throw new UnauthorizedError("Invalid email or password")
     }
 
-    const user = result.rows[0]
-
     // Compare password
-    const isValidPassword = await comparePassword(password, user.password_hash)
+    const isValidPassword = await comparePassword(password, user.passwordHash)
     if (!isValidPassword) {
       throw new UnauthorizedError("Invalid email or password")
     }
 
     // Generate token
     const token = generateToken({
-      userId: user.id,
+      userId: user._id.toString(),
       email: user.email,
       role: user.role,
     })
 
     // Log audit
-    await pool.query(
-      `INSERT INTO audit_logs (user_id, action, entity_type) 
-       VALUES ($1, $2, $3)`,
-      [user.id, "USER_LOGIN", "users"],
-    )
+    await AuditLog.create({
+      userId: user._id,
+      action: "USER_LOGIN",
+      target: {
+        entityType: "User",
+        entityId: user._id,
+      },
+    })
 
     return NextResponse.json({
       success: true,
       user: {
-        id: user.id,
+        id: user._id,
         email: user.email,
-        full_name: user.full_name,
+        fullName: user.fullName,
         role: user.role,
       },
       token,

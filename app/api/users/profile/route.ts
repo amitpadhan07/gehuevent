@@ -1,9 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { User } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
+import { Types } from "mongoose"
 
 export async function GET(req: NextRequest) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -16,17 +20,28 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 })
     }
 
-    const result = await pool.query(
-      `SELECT id, email, full_name, roll_number, branch, year, role, profile_picture_url, phone 
-       FROM users WHERE id = $1`,
-      [payload.userId],
+    const user = await User.findById(new Types.ObjectId(payload.userId)).select(
+      "email fullName rollNumber branch year role profilePictureUrl phone"
     )
 
-    if (result.rows.length === 0) {
+    if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
     }
 
-    return NextResponse.json({ success: true, user: result.rows[0] })
+    return NextResponse.json({
+      success: true,
+      user: {
+        id: user._id,
+        email: user.email,
+        fullName: user.fullName,
+        rollNumber: user.rollNumber,
+        branch: user.branch,
+        year: user.year,
+        role: user.role,
+        profilePictureUrl: user.profilePictureUrl,
+        phone: user.phone,
+      },
+    })
   } catch (error: any) {
     console.error("Profile error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })
@@ -35,6 +50,8 @@ export async function GET(req: NextRequest) {
 
 export async function PUT(req: NextRequest) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -47,23 +64,40 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 })
     }
 
-    const { full_name, roll_number, branch, year, phone, profile_picture_url } = await req.json()
+    const { fullName, rollNumber, branch, year, phone, profilePictureUrl } = await req.json()
 
-    const result = await pool.query(
-      `UPDATE users 
-       SET full_name = COALESCE($1, full_name),
-           roll_number = COALESCE($2, roll_number),
-           branch = COALESCE($3, branch),
-           year = COALESCE($4, year),
-           phone = COALESCE($5, phone),
-           profile_picture_url = COALESCE($6, profile_picture_url),
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $7
-       RETURNING id, email, full_name, roll_number, branch, year, role, phone`,
-      [full_name, roll_number, branch, year, phone, profile_picture_url, payload.userId],
-    )
+    const updateData: any = {}
+    if (fullName) updateData.fullName = fullName
+    if (rollNumber) updateData.rollNumber = rollNumber
+    if (branch) updateData.branch = branch
+    if (year !== undefined) updateData.year = year
+    if (phone) updateData.phone = phone
+    if (profilePictureUrl) updateData.profilePictureUrl = profilePictureUrl
 
-    return NextResponse.json({ success: true, user: result.rows[0] })
+    const user = await User.findByIdAndUpdate(
+      new Types.ObjectId(payload.userId),
+      { $set: updateData },
+      { new: true }
+    ).select("email fullName rollNumber branch year role phone")
+
+    return NextResponse.json({
+      success: true,
+      user: {
+        id: user?._id,
+        email: user?.email,
+        fullName: user?.fullName,
+        rollNumber: user?.rollNumber,
+        branch: user?.branch,
+        year: user?.year,
+        role: user?.role,
+        phone: user?.phone,
+      },
+    })
+  } catch (error: any) {
+    console.error("Profile update error:", error)
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+}
   } catch (error: any) {
     console.error("Profile update error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

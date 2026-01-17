@@ -1,9 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { Registration, Event } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
+import { Types } from "mongoose"
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -16,27 +20,30 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const registrationId = Number.parseInt(params.id)
+    const registrationId = params.id
 
     // Verify ownership
-    const regResult = await pool.query("SELECT user_id, event_id FROM event_registrations WHERE id = $1", [
-      registrationId,
-    ])
+    const registration = await Registration.findById(new Types.ObjectId(registrationId))
 
-    if (regResult.rows.length === 0) {
+    if (!registration) {
       return NextResponse.json({ error: "Registration not found" }, { status: 404 })
     }
 
-    if (regResult.rows[0].user_id !== payload.userId) {
+    if (registration.userId.toString() !== payload.userId) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    await pool.query(
-      `UPDATE event_registrations 
-       SET is_cancelled = true, cancelled_at = CURRENT_TIMESTAMP
-       WHERE id = $1`,
-      [registrationId],
-    )
+    // Update registration status
+    registration.status = "cancelled"
+    registration.cancelledAt = new Date()
+    await registration.save()
+
+    // Decrement event registration count
+    const event = await Event.findById(registration.eventId)
+    if (event) {
+      event.capacity.registeredCount = Math.max(0, event.capacity.registeredCount - 1)
+      await event.save()
+    }
 
     return NextResponse.json({ success: true, message: "Registration cancelled" })
   } catch (error: any) {

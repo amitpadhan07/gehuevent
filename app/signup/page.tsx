@@ -9,10 +9,10 @@ import { Mail, Lock, User, AlertCircle } from "lucide-react"
 
 export default function SignupPage() {
   const [formData, setFormData] = useState({
-    full_name: "",
+    fullName: "",
     email: "",
     password: "",
-    roll_number: "",
+    rollNumber: "",
     branch: "",
     year: "",
     role: "student",
@@ -77,8 +77,8 @@ export default function SignupPage() {
                 <User className="absolute left-3 top-3 text-foreground-light" size={20} />
                 <input
                   type="text"
-                  name="full_name"
-                  value={formData.full_name}
+                  name="fullName"
+                  value={formData.fullName}
                   onChange={handleChange}
                   placeholder="John Doe"
                   className="w-full pl-10 pr-4 py-2 bg-background-dark dark:bg-primary border border-primary-light dark:border-primary rounded-lg text-foreground dark:text-white placeholder-foreground-light focus:outline-none focus:border-secondary"
@@ -124,8 +124,8 @@ export default function SignupPage() {
                 <label className="block text-sm font-semibold text-foreground dark:text-white mb-2">Roll Number</label>
                 <input
                   type="text"
-                  name="roll_number"
-                  value={formData.roll_number}
+                  name="rollNumber"
+                  value={formData.rollNumber}
                   onChange={handleChange}
                   placeholder="21CS001"
                   className="w-full px-4 py-2 bg-background-dark dark:bg-primary border border-primary-light dark:border-primary rounded-lg text-foreground dark:text-white placeholder-foreground-light focus:outline-none focus:border-secondary"

@@ -1,9 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { Registration } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
+import { Types } from "mongoose"
 
 export async function GET(req: NextRequest) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -16,21 +20,52 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const result = await pool.query(
-      `SELECT er.id, er.event_id, er.registration_date, er.attendance_marked, 
-              er.attendance_status, er.qr_code_data,
-              e.id as event_id, e.title, e.event_date, e.venue_address, 
-              e.is_online, e.online_link, e.poster_url,
-              c.name as club_name, c.logo_url
-       FROM event_registrations er
-       JOIN events e ON er.event_id = e.id
-       JOIN clubs c ON e.club_id = c.id
-       WHERE er.user_id = $1 AND er.is_cancelled = false
-       ORDER BY e.event_date DESC`,
-      [payload.userId],
-    )
+    // Get eventId from query parameters if provided
+    const { searchParams } = new URL(req.url)
+    const eventId = searchParams.get("eventId")
 
-    return NextResponse.json({ success: true, registrations: result.rows })
+    // Build filter query
+    const filterQuery: any = {
+      userId: new Types.ObjectId(payload.userId),
+      status: { $ne: "cancelled" },
+    }
+
+    // If eventId is provided, add it to the filter
+    if (eventId) {
+      filterQuery.eventId = new Types.ObjectId(eventId)
+    }
+
+    const registrations = await Registration.find(filterQuery)
+      .populate({
+        path: "eventId",
+        select: "title description schedule location isOnline onlineLink posterUrl clubId capacity",
+        populate: {
+          path: "clubId",
+          select: "name assets",
+        },
+      })
+      .sort({ "eventId.schedule.startDate": -1 })
+      .lean()
+
+    const formattedRegistrations = registrations.map((reg: any) => ({
+      id: reg._id,
+      event_id: reg.eventId._id,
+      title: reg.eventId.title,
+      event_date: reg.eventId.schedule.startDate,
+      venueAddress: reg.eventId.location.venueAddress,
+      isOnline: reg.eventId.isOnline,
+      onlineLink: reg.eventId.onlineLink,
+      posterUrl: reg.eventId.posterUrl,
+      clubName: reg.eventId.clubId.name,
+      clubLogoUrl: reg.eventId.clubId.assets?.logoUrl,
+      status: reg.status,
+      registeredAt: reg.createdAt,
+      attendanceStatus: reg.attendance.currentStatus,
+      attendanceMarked: reg.attendance.isMarked,
+      qrCodeData: reg.qrCode.data,
+    }))
+
+    return NextResponse.json({ success: true, registrations: formattedRegistrations })
   } catch (error: any) {
     console.error("Registrations fetch error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

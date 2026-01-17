@@ -14,12 +14,19 @@ interface Event {
 
 export default function EventCard({ event }: { event: Event }) {
   const eventDate = new Date(event.event_date)
-  const formattedDate = eventDate.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
+  const isValidDate = !isNaN(eventDate.getTime())
+  const formattedDate = isValidDate
+    ? eventDate.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      }) +
+      " at " +
+      eventDate.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      })
+    : "Invalid Date"
 
   return (
     <Link href={`/events/${event.id}`}>

@@ -1,73 +1,89 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { Event, Club, Registration, User } from "@/lib/models"
 import { verifyToken } from "@/lib/auth"
+import { Types } from "mongoose"
 
 export async function GET(req: NextRequest) {
   try {
+    await connectDB()
+
     const searchParams = req.nextUrl.searchParams
     const search = searchParams.get("search") || ""
     const clubId = searchParams.get("clubId")
     const eventType = searchParams.get("type")
-    const sortBy = searchParams.get("sort") || "event_date"
+    const sortBy = searchParams.get("sort") || "startDate"
     const limit = Number.parseInt(searchParams.get("limit") || "20")
     const offset = Number.parseInt(searchParams.get("offset") || "0")
 
-    let query = `
-      SELECT e.id, e.title, e.description, e.event_type, e.poster_url, 
-             e.venue_address, e.is_online, e.online_link, e.event_date, e.max_capacity,
-             c.id as club_id, c.name as club_name, c.logo_url,
-             COUNT(er.id) as registered_count
-      FROM events e
-      LEFT JOIN clubs c ON e.club_id = c.id
-      LEFT JOIN event_registrations er ON e.id = er.event_id AND er.is_cancelled = false
-      WHERE e.is_published = true AND e.event_date > CURRENT_TIMESTAMP
-    `
-
-    const params: any[] = []
-    let paramIndex = 1
+    // Build query filter
+    const filter: any = {
+      isPublished: true,
+      "schedule.startDate": { $gt: new Date() },
+    }
 
     if (search) {
-      query += ` AND (e.title ILIKE $${paramIndex} OR e.description ILIKE $${paramIndex})`
-      params.push(`%${search}%`)
-      paramIndex++
+      filter.$or = [
+        { title: { $regex: search, $options: "i" } },
+        { description: { $regex: search, $options: "i" } },
+      ]
     }
 
     if (clubId) {
-      query += ` AND e.club_id = $${paramIndex}`
-      params.push(Number.parseInt(clubId))
-      paramIndex++
+      filter.clubId = new Types.ObjectId(clubId)
     }
 
     if (eventType) {
-      query += ` AND e.event_type = $${paramIndex}`
-      params.push(eventType)
-      paramIndex++
+      filter.eventType = eventType
     }
 
-    query += " GROUP BY e.id, c.id"
-
+    // Build sort
+    let sortObj: any = {}
     if (sortBy === "upcoming") {
-      query += " ORDER BY e.event_date ASC"
+      sortObj = { "schedule.startDate": 1 }
     } else if (sortBy === "latest") {
-      query += " ORDER BY e.created_at DESC"
+      sortObj = { createdAt: -1 }
     } else if (sortBy === "popular") {
-      query += " ORDER BY COUNT(er.id) DESC"
+      sortObj = { "capacity.registeredCount": -1 }
     }
 
-    query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`
-    params.push(limit, offset)
+    // Fetch events with population
+    const events = await Event.find(filter)
+      .populate("clubId", "name assets")
+      .sort(sortObj)
+      .skip(offset)
+      .limit(limit)
+      .lean()
 
-    const result = await pool.query(query, params)
+    // Format response
+    const formattedEvents = events.map((e: any) => ({
+      id: e._id,
+      title: e.title,
+      description: e.description,
+      eventType: e.eventType,
+      posterUrl: e.posterUrl,
+      venueAddress: e.location?.venueAddress,
+      isOnline: e.location?.isOnline,
+      onlineLink: e.location?.onlineLink,
+      event_date: e.schedule?.startDate,
+      maxCapacity: e.capacity?.max,
+      clubId: e.clubId?._id,
+      club_name: e.clubId?.name,
+      logoUrl: e.clubId?.assets?.logoUrl,
+      registered_count: e.capacity?.registeredCount,
+    }))
 
-    return NextResponse.json({ success: true, events: result.rows })
+    return NextResponse.json({ success: true, events: formattedEvents })
   } catch (error: any) {
-    console.error("Events fetch error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Events fetch error:", error.message || error)
+    return NextResponse.json({ error: error.message || "Internal server error" }, { status: 500 })
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
     if (!authHeader?.startsWith("Bearer ")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -85,63 +101,77 @@ export async function POST(req: NextRequest) {
     }
 
     const {
-      club_id,
+      clubId,
       title,
       description,
-      event_type,
-      poster_url,
-      venue_address,
-      is_online,
-      online_link,
-      event_date,
-      end_date,
-      max_capacity,
-      registration_open_date,
-      registration_close_date,
+      eventType,
+      posterUrl,
+      venueAddress,
+      isOnline,
+      onlineLink,
+      startDate,
+      endDate,
+      maxCapacity,
+      registrationOpen,
+      registrationClose,
     } = await req.json()
 
-    if (!title || !club_id || !event_date) {
-      return NextResponse.json({ error: "Title, club_id, and event_date are required" }, { status: 400 })
+    if (!title || !clubId || !startDate) {
+      return NextResponse.json({ error: "Title, clubId, and startDate are required" }, { status: 400 })
     }
 
     // Verify user is chairperson of this club
     if (payload.role === "chairperson") {
-      const chairResult = await pool.query(
-        `SELECT id FROM club_members 
-         WHERE club_id = $1 AND user_id = $2 AND role = 'chairperson'`,
-        [club_id, payload.userId],
+      const user = await User.findById(payload.userId)
+      const isMember = user?.clubMemberships.some(
+        (m: any) => m.clubId.toString() === clubId && m.role === "chairperson"
       )
 
-      if (chairResult.rows.length === 0) {
+      if (!isMember) {
         return NextResponse.json({ error: "You are not authorized for this club" }, { status: 403 })
       }
     }
 
-    const result = await pool.query(
-      `INSERT INTO events (club_id, title, description, event_type, poster_url, venue_address, 
-                          is_online, online_link, event_date, end_date, max_capacity, 
-                          registration_open_date, registration_close_date, created_by, is_published)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, true)
-       RETURNING id, title, description, event_type, event_date, max_capacity`,
-      [
-        club_id,
-        title,
-        description,
-        event_type,
-        poster_url,
-        venue_address,
-        is_online,
-        online_link,
-        event_date,
-        end_date,
-        max_capacity,
-        registration_open_date,
-        registration_close_date,
-        payload.userId,
-      ],
-    )
+    // Create event
+    const event = await Event.create({
+      clubId: new Types.ObjectId(clubId),
+      title,
+      description,
+      eventType: eventType || "other",
+      posterUrl,
+      location: {
+        venueAddress,
+        isOnline,
+        onlineLink,
+      },
+      schedule: {
+        startDate: new Date(startDate),
+        endDate: endDate ? new Date(endDate) : undefined,
+        registrationOpen: registrationOpen ? new Date(registrationOpen) : undefined,
+        registrationClose: registrationClose ? new Date(registrationClose) : undefined,
+      },
+      capacity: {
+        max: maxCapacity,
+        registeredCount: 0,
+      },
+      isPublished: true,
+      createdBy: new Types.ObjectId(payload.userId),
+    })
 
-    return NextResponse.json({ success: true, event: result.rows[0] }, { status: 201 })
+    return NextResponse.json(
+      {
+        success: true,
+        event: {
+          id: event._id,
+          title: event.title,
+          description: event.description,
+          eventType: event.eventType,
+          startDate: event.schedule.startDate,
+          maxCapacity: event.capacity.max,
+        },
+      },
+      { status: 201 }
+    )
   } catch (error: any) {
     console.error("Event creation error:", error)
     return NextResponse.json({ error: "Internal server error" }, { status: 500 })

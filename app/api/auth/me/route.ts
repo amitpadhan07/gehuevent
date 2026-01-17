@@ -1,9 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server"
-import pool from "@/lib/db"
+import { connectDB } from "@/lib/db"
+import { User } from "@/lib/models"
 import { verifyToken, UnauthorizedError } from "@/lib/auth"
+import { Types } from "mongoose"
 
 export async function GET(req: NextRequest) {
   try {
+    await connectDB()
+
     const authHeader = req.headers.get("authorization")
 
     if (!authHeader?.startsWith("Bearer ")) {
@@ -18,18 +22,27 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch user data
-    const result = await pool.query(
-      "SELECT id, email, full_name, role, roll_number, branch, year, profile_picture_url FROM users WHERE id = $1",
-      [payload.userId],
+    const user = await User.findById(new Types.ObjectId(payload.userId)).select(
+      "email fullName role rollNumber branch year profilePictureUrl phone"
     )
 
-    if (result.rows.length === 0) {
+    if (!user) {
       throw new UnauthorizedError("User not found")
     }
 
     return NextResponse.json({
       success: true,
-      user: result.rows[0],
+      user: {
+        id: user._id,
+        email: user.email,
+        fullName: user.fullName,
+        role: user.role,
+        rollNumber: user.rollNumber,
+        branch: user.branch,
+        year: user.year,
+        profilePictureUrl: user.profilePictureUrl,
+        phone: user.phone,
+      },
     })
   } catch (error: any) {
     console.error("Me endpoint error:", error)
